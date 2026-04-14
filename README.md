@@ -20,8 +20,6 @@
 4. 根据用户主页 URL 爬取用户元信息
 5. 根据问题 ID 和答案 ID 爬取对应评论区内容（一次只能抓取一个问题）
 
-<img src=”images/知乎话题标签展示.png” width=”60%”>
-
 ## **项目结构**
 
 ```
@@ -142,8 +140,6 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 - **输入:** 话题 ID（如 `火影忍者` 的 ID 为 `19555130`，可从话题页 URL 中找到）
 - **输出:** `data/question_list.csv`（字段：type, id, title, url, date）
 
-<img src=”images/知乎话题页面.png” width=”60%”>
-
 > [!IMPORTANT]
 > 由于知乎限制，各板块最多只能展示 1000 条数据，因此无法获取话题下的全部问题。代码会对讨论、等待回答板块分别按热门排序和时间排序爬取，以尽可能多地获取不重复数据。可通过爬取多个相似话题标签来最大化数据覆盖度。
 
@@ -156,8 +152,6 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 > [!IMPORTANT]
 > 知乎反爬机制可能将返回文本加密为乱码。之前约爬取 250 条后出现乱码，需手动更新 cookie。2024/11/16 后似乎已不再出现，但建议持续关注。
-
-<img src=”images/乱码图片.png” width=”60%” alt=”乱码截图”>
 
 ### **scraping3_answer_meta_by_questionID.py**
 
