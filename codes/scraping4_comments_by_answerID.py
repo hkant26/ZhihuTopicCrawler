@@ -1,10 +1,25 @@
-# # Get All Comments by Question ID
+"""
+scraping4_comments_by_answerID.py — 根据问题ID获取所有回答下的评论
 
-# ### About this script:
+功能：给定一个问题 ID，读取该问题下所有回答的 ID（需先运行 scraping3），
+      然后逐个回答抓取其根评论和子评论（嵌套回复）。
 
-# - **Input**: A Question ID
-# - **Output**: All Comments of All the answers of the Question, including root comments and child comments
-# Last Run: 2024/12/1 23:45
+输入：问题 ID（需要 data/answers_of_question/question_{QID}.csv 已存在）
+输出：data/comments_of_question/question_{QID}.csv，包含字段：
+      answer_id, comment_type, reply_comment_id, reply_root_comment_id,
+      comment_id, comment_content, comment_date, comment_upvote,
+      child_comment_count, author_name, author_url_token, author_gender, author_headline
+
+API 接口：
+    - 根评论：/api/v4/answers/{answer_id}/root_comments
+    - 子评论：/api/v4/comment_v5/comment/{comment_id}/child_comment
+
+注意事项：
+    - 强烈建议一次只爬取一个问题，爬取时间较长，容易触发反爬虫机制
+    - 连续 5 次请求失败则判定为需要验证码，自动终止
+
+最后运行时间：2024/12/1 23:45
+"""
 
 
 # %%
@@ -19,6 +34,15 @@ from get_url_text import get_url_text
 
 # %%
 def get_answer_id(question_id: str) -> list:
+    """
+    从本地 CSV 文件中读取指定问题下所有回答的 ID 列表。
+
+    参数:
+        question_id (str): 问题 ID
+
+    返回:
+        list: 回答 ID 列表。若数据文件不存在则返回空列表。
+    """
     file_name = f"data/answers_of_question/question_{question_id}.csv"
     if not os.path.exists(file_name):
         print(
@@ -32,6 +56,18 @@ def get_answer_id(question_id: str) -> list:
 
 # %%
 def parse_root_comment(json_data: dict, answer_id: str) -> list:
+    """
+    解析单条根评论的 JSON 数据。
+
+    根评论没有回复目标，因此 reply_comment_id 和 reply_root_comment_id 为空。
+
+    参数:
+        json_data (dict): 单条评论的 JSON 数据
+        answer_id (str): 所属回答的 ID
+
+    返回:
+        list: 评论数据列表，包含 13 个字段
+    """
     comment_type = "根评论"
     reply_comment_id = ""
     reply_root_comment_id = ""
@@ -66,12 +102,25 @@ def parse_root_comment(json_data: dict, answer_id: str) -> list:
 
 # %%
 def get_root_comments(answer_id: str) -> pd.DataFrame:
+    """
+    获取某条回答下的所有根评论。
+
+    通过分页遍历 API，每页最多 20 条评论，直到 data 为空列表。
+    每 30 页暂停 0.5 秒以降低请求频率。
+
+    参数:
+        answer_id (str): 回答 ID
+
+    返回:
+        pd.DataFrame: 包含所有根评论的 DataFrame，失败时返回 None
+    """
     try:
         comments_list = []
 
         url = f"https://www.zhihu.com/api/v4/answers/{answer_id}/root_comments?limit=20&offset=0&order_by=score&status=open"
         text = get_url_text(url)
-        json_data = json.loads(text)["data"]
+        parsed = json.loads(text)
+        json_data = parsed["data"]
         count = 0
 
         while json_data:
@@ -79,9 +128,10 @@ def get_root_comments(answer_id: str) -> pd.DataFrame:
                 root_comment_data = parse_root_comment(item, answer_id)
                 comments_list.append(root_comment_data)
 
-            url = json.loads(text)["paging"]["next"]
+            url = parsed["paging"]["next"]
             text = get_url_text(url)
-            json_data = json.loads(text)["data"]
+            parsed = json.loads(text)
+            json_data = parsed["data"]
             count += 1
 
             if count % 30 == 0:
@@ -115,6 +165,22 @@ def get_root_comments(answer_id: str) -> pd.DataFrame:
 
 # %%
 def parse_child_comment(json_data: dict, answer_id: str) -> list:
+    """
+    解析单条子评论（嵌套回复）的 JSON 数据。
+
+    子评论具有回复目标：
+    - reply_comment_id: 直接回复的评论 ID
+    - reply_root_comment_id: 所属的根评论 ID
+
+    注意：子评论的点赞字段名为 like_count，与根评论的 vote_count 不同。
+
+    参数:
+        json_data (dict): 单条子评论的 JSON 数据
+        answer_id (str): 所属回答的 ID
+
+    返回:
+        list: 评论数据列表，包含 13 个字段
+    """
     comment_type = "子评论"
     reply_comment_id = json_data["reply_comment_id"]
     reply_root_comment_id = json_data["reply_root_comment_id"]
@@ -123,7 +189,7 @@ def parse_child_comment(json_data: dict, answer_id: str) -> list:
     comment_date = datetime.fromtimestamp(json_data["created_time"]).strftime(
         "%Y-%m-%d"
     )
-    comment_upvote = json_data["like_count"]
+    comment_upvote = json_data["like_count"]  # 子评论用 like_count 而非根评论的 vote_count
     child_comment_count = json_data["child_comment_count"]
     author_name = json_data["author"]["name"]
     author_url_token = json_data["author"]["url_token"]
@@ -149,13 +215,25 @@ def parse_child_comment(json_data: dict, answer_id: str) -> list:
 
 # %%
 def get_child_comments(comment_item: list) -> pd.DataFrame:
+    """
+    获取某条根评论下的所有子评论。
+
+    通过分页遍历子评论 API，每页最多 20 条。
+
+    参数:
+        comment_item (list): [answer_id, root_comment_id]
+
+    返回:
+        pd.DataFrame: 包含所有子评论的 DataFrame，失败时返回 None
+    """
     try:
         answer_id, root_comment_id = comment_item
         comments_list = []
 
         url = f"https://www.zhihu.com/api/v4/comment_v5/comment/{root_comment_id}/child_comment?limit=20&offset=0"
         text = get_url_text(url)
-        json_data = json.loads(text)["data"]
+        parsed = json.loads(text)
+        json_data = parsed["data"]
         count = 0
 
         while json_data:
@@ -163,9 +241,10 @@ def get_child_comments(comment_item: list) -> pd.DataFrame:
                 root_comment_data = parse_child_comment(item, answer_id)
                 comments_list.append(root_comment_data)
 
-            url = json.loads(text)["paging"]["next"]
+            url = parsed["paging"]["next"]
             text = get_url_text(url)
-            json_data = json.loads(text)["data"]
+            parsed = json.loads(text)
+            json_data = parsed["data"]
             count += 1
 
             if count % 30 == 0:
@@ -199,6 +278,15 @@ def get_child_comments(comment_item: list) -> pd.DataFrame:
 
 # %%
 def save_data(df_comments: pd.DataFrame, question_id: str) -> None:
+    """
+    将评论数据保存为 CSV 文件，支持增量更新。
+
+    若文件已存在，合并旧数据后按 comment_id 去重。
+
+    参数:
+        df_comments (pd.DataFrame): 评论数据
+        question_id (str): 问题 ID（用于生成文件名）
+    """
     filename = f"data/comments_of_question/question_{question_id}.csv"
 
     df_tosave = df_comments
@@ -206,9 +294,6 @@ def save_data(df_comments: pd.DataFrame, question_id: str) -> None:
     if os.path.exists(filename):
         df_original = pd.read_csv(filename)
         df_tosave = pd.concat([df_original, df_tosave], ignore_index=True)
-        df_tosave = df_tosave.drop_duplicates(subset=["comment_id"]).sort_values(
-            by="comment_date"
-        )
     df_tosave = df_tosave.drop_duplicates(subset=["comment_id"]).sort_values(
         by="comment_date"
     )
